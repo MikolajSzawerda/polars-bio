@@ -6,6 +6,9 @@ mod scan;
 mod streaming;
 mod udtf;
 mod utils;
+mod quality;
+// mod base_quality;
+// mod base_quality_calculator;
 
 use std::string::ToString;
 use std::sync::{Arc, Mutex};
@@ -27,6 +30,7 @@ use crate::operation::do_range_operation;
 use crate::option::{
     BioTable, FilterOp, InputFormat, RangeOp, RangeOptions, ReadOptions, VcfReadOptions,
 };
+use crate::quality::compute_base_quality;
 use crate::scan::{maybe_register_table, register_frame, register_table};
 use crate::streaming::RangeOperationScan;
 use crate::utils::convert_arrow_rb_schema_to_polars_df_schema;
@@ -34,6 +38,19 @@ use crate::utils::convert_arrow_rb_schema_to_polars_df_schema;
 const LEFT_TABLE: &str = "s1";
 const RIGHT_TABLE: &str = "s2";
 const DEFAULT_COLUMN_NAMES: [&str; 3] = ["contig", "start", "end"];
+
+#[pyfunction]
+#[pyo3(signature=(py_ctx, df1))]
+fn base_quality_operation_frame(
+   py_ctx: &PyBioSessionContext,
+   df1: PyArrowType<ArrowArrayStreamReader>,
+) -> PyResult<PyDataFrame> {
+    let mut reader: ArrowArrayStreamReader = df1.0;
+    let df = compute_base_quality(&mut reader)
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+
+    Ok(PyDataFrame::new(df))
+}
 
 #[pyfunction]
 #[pyo3(signature = (py_ctx, df1, df2, range_options, limit=None))]
@@ -406,6 +423,7 @@ fn py_from_polars(
 #[pymodule]
 fn polars_bio(_py: Python, m: &Bound<PyModule>) -> PyResult<()> {
     pyo3_log::init();
+    m.add_function(wrap_pyfunction!(base_quality_operation_frame, m)?)?;
     m.add_function(wrap_pyfunction!(range_operation_frame, m)?)?;
     m.add_function(wrap_pyfunction!(range_operation_scan, m)?)?;
     m.add_function(wrap_pyfunction!(stream_range_operation_scan, m)?)?;
