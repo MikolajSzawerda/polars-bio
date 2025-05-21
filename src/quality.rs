@@ -3,13 +3,17 @@ use std::error::Error;
 use std::sync::Arc;
 use arrow::array::{Array, LargeStringArray};
 use arrow_array::ffi_stream::ArrowArrayStreamReader;
-use arrow_schema::{DataType, Field, Schema};
+use arrow_schema::{ArrowError, DataType, Field, Schema};
 use datafusion::dataframe::DataFrame;
 use datafusion::arrow::{
     array::{Int32Array, Float64Array, ArrayRef},
     record_batch::RecordBatch,
 };
 use datafusion::prelude::SessionContext;
+use exon::ExonSession;
+use futures_util::StreamExt;
+use pyo3::PyErr;
+use tokio::runtime::Runtime;
 use crate::context::PyBioSessionContext;
 
 fn quartiles(hist: &[usize]) -> [f64; 5] {
@@ -51,24 +55,20 @@ fn quartiles(hist: &[usize]) -> [f64; 5] {
     ret[0] = ret[1] - 1.5 * iqr;
     ret[4] = ret[3] + 1.5 * iqr;
     ret
-}/// Main routine – gathers histograms *from an Arrow stream*,
-/// then produces a Polars `DataFrame`
-pub fn compute_base_quality(
-    reader: &mut ArrowArrayStreamReader,
-) -> Result<DataFrame, Box<dyn Error>> {
-    // pos  → histogram[0..93]  (Phred + 33 → max 93)
-    let mut base_quality_count: HashMap<usize, Vec<usize>> = HashMap::new();
+}
 
-    // ── 1. scan every record-batch coming from Polars
-    while let Some(batch) = reader.next() {
+async fn do_compute(df: DataFrame)->Result<HashMap<usize, Vec<usize>>, Box<dyn Error>> {
+    let mut base_quality_count: HashMap<usize, Vec<usize>> = HashMap::new();
+    let mut stream = df.execute_stream().await?;
+    while let Some(batch) = stream.next().await {
         let batch = batch?;                                // Arrow RecordBatch
         let qual_arr = batch
-            .column_by_name("quality scores")
+            .column_by_name("quality_scores")
             .or_else(|| batch.column_by_name("quality_scores"))
-            .ok_or("column «quality scores» not found")?
+            .ok_or("column «quality_scores» not found")?
             .as_any()
             .downcast_ref::<LargeStringArray>()
-            .ok_or("quality scores must be LargeStringArray")?;
+            .ok_or("quality_scores must be LargeStringArray")?;
 
         for row in 0..qual_arr.len() {
             let qs = qual_arr.value(row).as_bytes();
@@ -81,6 +81,18 @@ pub fn compute_base_quality(
             }
         }
     }
+    Ok(base_quality_count)
+}
+/// Main routine – gathers histograms *from an Arrow stream*,
+/// then produces a Polars `DataFrame`
+pub fn compute_base_quality(
+    ctx: &ExonSession,
+    rt: &Runtime,
+    table: String,
+) -> Result<DataFrame, Box<dyn Error>> {
+    let query = format!(r#"SELECT * FROM {}"#, table);
+    let df = rt.block_on(ctx.sql(&query))?;
+    let base_quality_count = rt.block_on(do_compute(df))?;
 
     // ── 2. derive statistics for every position
     let mut pos_vec =   Vec::with_capacity(base_quality_count.len());
@@ -105,6 +117,7 @@ pub fn compute_base_quality(
         q3_vec    .push(qs[3]);
         upper_vec .push(qs[4]);
     }
+    
     let schema = Arc::new(Schema::new(vec![
         Field::new("pos",     DataType::Int32,   false),
         Field::new("average", DataType::Float64, false),
@@ -118,7 +131,7 @@ pub fn compute_base_quality(
     let batch = RecordBatch::try_new(
         schema.clone(),
         vec![
-            Arc::new(Int32Array::from(pos_vec))      as ArrayRef,
+            Arc::new(Int32Array::from(pos_vec)),
             Arc::new(Float64Array::from(avg_vec)),
             Arc::new(Float64Array::from(lower_vec)),
             Arc::new(Float64Array::from(q1_vec)),
@@ -127,7 +140,8 @@ pub fn compute_base_quality(
             Arc::new(Float64Array::from(upper_vec)),
         ],
     )?;
-    let ctx = SessionContext::new();
-    let df = ctx.read_batch(batch)?;
+    //TODO this should result in dataframe not RecordBatch
+    ctx.session.register_batch("b", batch).ok();
+    let df = rt.block_on(ctx.session.table("b"))?;
     Ok(df)
 }

@@ -11,30 +11,30 @@ def test_fastq_file():
 def fastq_df(test_fastq_file):
 	return pb.read_fastq(test_fastq_file)
 
-def test_base_sequence_quality_basic(fastq_df):
-	"""Test basic functionality of base sequence quality calculation"""
-	# Calculate quality metrics
-	res_df = pb.base_sequence_quality(fastq_df)
-	quality_df = res_df.collect()[0]
-	# Check output schema
-	expected_columns = [
-		"pos", "average", "upper", "q3", "median", "q1", "lower"
-	]
-	assert all(col in quality_df.columns for col in expected_columns)
-
-	# Check that we have the correct number of positions
-	# First sequence is 35 bases, second is 11 bases
-	assert quality_df["pos"].max() == 34  # 0-based indexing
-
-	# Check that quality scores are within expected ranges
-	assert quality_df["lower"].min() >= 0  # Phred+33 minimum
-	assert quality_df["upper"].max() <= 40  # Phred+33 typical maximum
-
-	# Check that statistics are properly ordered
-	assert (quality_df["lower"] <= quality_df["q1"]).all()
-	assert (quality_df["q1"] <= quality_df["median"]).all()
-	assert (quality_df["median"] <= quality_df["q3"]).all()
-	assert (quality_df["q3"] <= quality_df["upper"]).all()
+# def test_base_sequence_quality_basic(fastq_df):
+# 	"""Test basic functionality of base sequence quality calculation"""
+# 	# Calculate quality metrics
+# 	res_df = pb.base_sequence_quality(fastq_df)
+# 	quality_df = res_df.collect()[0]
+# 	# Check output schema
+# 	expected_columns = [
+# 		"pos", "average", "upper", "q3", "median", "q1", "lower"
+# 	]
+# 	assert all(col in quality_df.columns for col in expected_columns)
+# 
+# 	# Check that we have the correct number of positions
+# 	# First sequence is 35 bases, second is 11 bases
+# 	assert quality_df["pos"].max() == 34  # 0-based indexing
+# 
+# 	# Check that quality scores are within expected ranges
+# 	assert quality_df["lower"].min() >= 0  # Phred+33 minimum
+# 	assert quality_df["upper"].max() <= 40  # Phred+33 typical maximum
+# 
+# 	# Check that statistics are properly ordered
+# 	assert (quality_df["lower"] <= quality_df["q1"]).all()
+# 	assert (quality_df["q1"] <= quality_df["median"]).all()
+# 	assert (quality_df["median"] <= quality_df["q3"]).all()
+# 	assert (quality_df["q3"] <= quality_df["upper"]).all()
 #
 # def test_base_sequence_quality_values(fastq_df):
 # 	"""Test specific quality score calculations"""

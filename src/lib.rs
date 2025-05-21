@@ -45,8 +45,11 @@ fn base_quality_operation_frame(
    py_ctx: &PyBioSessionContext,
    df1: PyArrowType<ArrowArrayStreamReader>,
 ) -> PyResult<PyDataFrame> {
-    let mut reader: ArrowArrayStreamReader = df1.0;
-    let df = compute_base_quality(&mut reader)
+    // let mut reader: ArrowArrayStreamReader = df1.0;
+    register_frame(py_ctx, df1, LEFT_TABLE.to_string());
+    let rt = Runtime::new()?;
+    let ctx = &py_ctx.ctx;
+    let df = compute_base_quality(ctx, &rt, LEFT_TABLE.to_string())
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
     Ok(PyDataFrame::new(df))
