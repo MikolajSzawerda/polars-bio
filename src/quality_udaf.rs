@@ -183,13 +183,17 @@ impl QuartilesAcc {
          let stats_per_pos: Vec<ScalarValue> = self
              .hist
              .iter()
-             .map(|buckets| {
-                 let res = Self::quartiles(buckets);
-                 // pack the five numbers into a FixedSizeList<UInt8;5>
-                 let scalars: Vec<ScalarValue> = res.
-                     iter()
-                     .map(|&value| ScalarValue::Float64((Some(value))))
-                     .collect();
+             .enumerate()
+             .map(|(pos, hist)| {
+                 let res = Self::quartiles(hist);
+                 let mut scalars = Vec::<ScalarValue>::with_capacity(7);
+                 let (sum, total) = hist.iter().enumerate()
+                     .fold((0u64,0u64), |(s,t),(q,c)| (s+(q as u64)*c,t+c));
+                 let avg = sum as f64 / total as f64;
+                 scalars.push(ScalarValue::Float64(Some(pos as f64)));
+                 scalars.push(ScalarValue::Float64(Some(avg)));
+                 scalars.extend(res.into_iter().map(|v| ScalarValue::Float64(Some(v))));
+
                  ScalarValue::List(ScalarValue::new_list(
                      &scalars,
                      &DataType::Float64,
