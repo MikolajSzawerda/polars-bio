@@ -10,7 +10,10 @@ def test_fastq_file():
 @pytest.fixture
 def fastq_df(test_fastq_file):
 	return pb.read_fastq(test_fastq_file)
-
+def test_base_sequence_quality_udaf(fastq_df):
+	res_df = pb.quality_udaf(fastq_df)
+	print(res_df.collect())
+	...
 # def test_base_sequence_quality_basic(fastq_df):
 # 	"""Test basic functionality of base sequence quality calculation"""
 # 	# Calculate quality metrics

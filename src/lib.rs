@@ -7,15 +7,17 @@ mod streaming;
 mod udtf;
 mod utils;
 mod quality;
+mod quality_udaf;
 // mod base_quality;
 // mod base_quality_calculator;
 
 use std::string::ToString;
 use std::sync::{Arc, Mutex};
-
+// use arrow_schema::DataType;
 use datafusion::arrow::ffi_stream::ArrowArrayStreamReader;
 use datafusion::arrow::pyarrow::PyArrowType;
 use datafusion::datasource::MemTable;
+use datafusion::logical_expr::{create_udaf, Volatility};
 use datafusion_python::dataframe::PyDataFrame;
 use datafusion_vcf::storage::VcfReader;
 use log::{debug, error, info};
@@ -24,13 +26,14 @@ use polars_python::error::PyPolarsErr;
 use polars_python::lazyframe::PyLazyFrame;
 use pyo3::prelude::*;
 use tokio::runtime::Runtime;
-
+use arrow::datatypes::{DataType, Field};
 use crate::context::PyBioSessionContext;
 use crate::operation::do_range_operation;
 use crate::option::{
     BioTable, FilterOp, InputFormat, RangeOp, RangeOptions, ReadOptions, VcfReadOptions,
 };
 use crate::quality::compute_base_quality;
+use crate::quality_udaf::QuartilesAcc;
 use crate::scan::{maybe_register_table, register_frame, register_table};
 use crate::streaming::RangeOperationScan;
 use crate::utils::convert_arrow_rb_schema_to_polars_df_schema;
@@ -55,6 +58,57 @@ fn base_quality_operation_frame(
     Ok(PyDataFrame::new(df))
 }
 
+
+#[pyfunction]
+#[pyo3(signature=(py_ctx, df1))]
+fn quality_udaf_frame(
+    py_ctx: &PyBioSessionContext,
+    df1: PyArrowType<ArrowArrayStreamReader>,
+) -> PyResult<PyDataFrame> {
+    let inner_stats_type = DataType::List(Arc::new(Field::new(
+        "item",         // ← default name
+        DataType::Float64,
+        false,
+    )));
+    let return_type = DataType::List(Arc::new(Field::new(
+        "item",         // ← default name
+        inner_stats_type.clone(),
+        false,
+    )));
+
+    // ---------- state type  List<List<UInt64>> ------------
+    let inner_counts_type = DataType::List(Arc::new(Field::new(
+        "item",         // ← default name
+        DataType::UInt64,
+        false,
+    )));
+    let state_type = DataType::List(Arc::new(Field::new(
+        "item",         // ← default name
+        inner_counts_type.clone(),
+        false,
+    )));
+
+    // Create UDAF with corrected types:
+    let udaf = create_udaf(
+        "per_pos_quartiles",
+        vec![DataType::LargeUtf8],
+        Arc::new(return_type),
+        Volatility::Immutable,
+        Arc::new(|_| Ok(Box::new(QuartilesAcc::new()))),
+        Arc::new(vec![state_type]),
+    );
+
+    py_ctx.ctx.session.register_udaf(udaf);
+    register_frame(py_ctx, df1, LEFT_TABLE.to_string());
+
+    let rt = Runtime::new()?;
+    let df = rt.block_on(py_ctx.ctx.sql(
+        "SELECT per_pos_quartiles(quality_scores) AS pos_stats FROM s1"
+    ))
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+
+    Ok(PyDataFrame::new(df))
+}
 #[pyfunction]
 #[pyo3(signature = (py_ctx, df1, df2, range_options, limit=None))]
 fn range_operation_frame(
@@ -427,6 +481,7 @@ fn py_from_polars(
 fn polars_bio(_py: Python, m: &Bound<PyModule>) -> PyResult<()> {
     pyo3_log::init();
     m.add_function(wrap_pyfunction!(base_quality_operation_frame, m)?)?;
+    m.add_function(wrap_pyfunction!(quality_udaf_frame, m)?)?;
     m.add_function(wrap_pyfunction!(range_operation_frame, m)?)?;
     m.add_function(wrap_pyfunction!(range_operation_scan, m)?)?;
     m.add_function(wrap_pyfunction!(stream_range_operation_scan, m)?)?;
