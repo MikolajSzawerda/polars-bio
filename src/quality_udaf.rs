@@ -25,8 +25,6 @@ impl QuartilesAcc {
     }
     fn add_quality(&mut self, arr: &str) {
         self.grow_to(arr.len());
-        // for row in 0..arr.len() {
-        //     let qs = arr.value(row).as_bytes();
             for (pos, byte) in arr.bytes().enumerate() {
                 // Phred + 33 encoding
                 let q = (byte as usize) - 33;
@@ -129,11 +127,6 @@ impl QuartilesAcc {
              return Ok(());
          }
 
-         // ───────────────────────────────────────────────────────────────
-         // 1️⃣  each partial accumulator serialised itself, via `state()`,
-         //     into **one** column that has type  List<List<UInt64>> .
-         //     → therefore we must down-cast to `ListArray`, not (Large)StringArray
-         // ───────────────────────────────────────────────────────────────
          let outer = states[0]
              .as_any()
              .downcast_ref::<ListArray>()
@@ -141,9 +134,7 @@ impl QuartilesAcc {
                  DataFusionError::Internal("state column must be List<List<UInt64>>".into())
              })?;
 
-         // one ROW in `outer`  ≙  one partial accumulator to merge
          for row in 0..outer.len() {
-             // outer.value(row)  ≙  per-position histograms  (List<UInt64>)
              let pos_arr_ref = outer.value(row);
              let pos_arr = pos_arr_ref
                  .as_any()
@@ -152,11 +143,9 @@ impl QuartilesAcc {
                      DataFusionError::Internal("expected inner List<UInt64> in state".into())
                  })?;
 
-             // build Vec<PhredHist> for every position found in this partial state
              let mut pos_hists = Vec::<PhredHist>::with_capacity(pos_arr.len());
 
              for pos in 0..pos_arr.len() {
-                 // List element  ➜  UInt64[≤94]  (bucket counts)
                  let cnts_ref = pos_arr.value(pos);
                  let cnts = cnts_ref
                      .as_any()
@@ -166,14 +155,13 @@ impl QuartilesAcc {
                      })?;
 
                  let mut buckets = [0u64; 94];
-                 let len = std::cmp::min(cnts.len(), 94); // be defensive
+                 let len = std::cmp::min(cnts.len(), 94);
                  for d in 0..len {
                      buckets[d] = cnts.value(d);
                  }
                  pos_hists.push(buckets);
              }
 
-             // finally merge this partial histogram into *our* accumulator
              self.merge_hist(&pos_hists);
          }
 

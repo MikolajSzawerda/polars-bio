@@ -66,29 +66,27 @@ fn quality_udaf_frame(
     df1: PyArrowType<ArrowArrayStreamReader>,
 ) -> PyResult<PyDataFrame> {
     let inner_stats_type = DataType::List(Arc::new(Field::new(
-        "item",         // ← default name
+        "item",         
         DataType::Float64,
         false,
     )));
     let return_type = DataType::List(Arc::new(Field::new(
-        "item",         // ← default name
+        "item",       
         inner_stats_type.clone(),
         false,
     )));
 
-    // ---------- state type  List<List<UInt64>> ------------
     let inner_counts_type = DataType::List(Arc::new(Field::new(
-        "item",         // ← default name
+        "item",         
         DataType::UInt64,
         false,
     )));
     let state_type = DataType::List(Arc::new(Field::new(
-        "item",         // ← default name
+        "item",       
         inner_counts_type.clone(),
         false,
     )));
 
-    // Create UDAF with corrected types:
     let udaf = create_udaf(
         "per_pos_quartiles",
         vec![DataType::LargeUtf8],
